@@ -1,8 +1,23 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import Card from './Card';
 import { Layers } from 'lucide-react';
 
 let toastIdCounter = 0;
+
+const cardAnim = {
+    initial: { scale: 0.4, opacity: 0 },
+    animate: { scale: 1, opacity: 1 },
+    exit: { scale: 0.4, opacity: 0 },
+    transition: { duration: 0.3, ease: 'easeOut' },
+};
+
+const discardAnim = {
+    initial: { scale: 0.5, opacity: 0, y: -15 },
+    animate: { scale: 1, opacity: 1, y: 0 },
+    exit: { scale: 0.5, opacity: 0, y: 15 },
+    transition: { duration: 0.3 },
+};
 
 function GameBoard({ gameState, socket, playerId }) {
     const [selectedMyIndex, setSelectedMyIndex] = useState(null);
@@ -24,25 +39,18 @@ function GameBoard({ gameState, socket, playerId }) {
         return id;
     }, []);
 
-    // Listen for server notifications
     useEffect(() => {
-        const handleNotification = ({ message, type }) => {
-            addToast(message, type);
-        };
+        const handleNotification = ({ message, type }) => addToast(message, type);
         socket.on('game_notification', handleNotification);
         return () => socket.off('game_notification', handleNotification);
     }, [socket, addToast]);
 
-    // Listen for ability reveals (replace alert with toast)
     useEffect(() => {
-        const handleReveal = ({ card }) => {
-            addToast(`Peek: ${card.value} of ${card.suit}`, 'success', 5000);
-        };
+        const handleReveal = ({ card }) => addToast(`Peek: ${card.value} of ${card.suit}`, 'success', 5000);
         socket.on('ability_reveal', handleReveal);
         return () => socket.off('ability_reveal', handleReveal);
     }, [socket, addToast]);
 
-    // Listen for failed stack card reveal
     useEffect(() => {
         const handleStackReveal = ({ card }) => {
             setRevealCard(card);
@@ -52,14 +60,11 @@ function GameBoard({ gameState, socket, playerId }) {
         return () => socket.off('stack_reveal', handleStackReveal);
     }, [socket]);
 
-    // Cleanup timers on unmount
     useEffect(() => {
-        return () => {
-            Object.values(toastTimers.current).forEach(clearTimeout);
-        };
+        return () => Object.values(toastTimers.current).forEach(clearTimeout);
     }, []);
 
-    // Clean up selection when game state changes
+    // Reset selections when game state changes
     useEffect(() => {
         setSelectedMyIndex(null);
         setSelectedOppIndex(null);
@@ -78,39 +83,36 @@ function GameBoard({ gameState, socket, playerId }) {
     const ability = gameState.activeAbility;
     const iPlayedAbility = ability?.player === playerId;
 
-    // Jack-specific phases
     const isJackPhase1 = ability?.type === 'J' && iPlayedAbility && !ability.jackPhase;
     const isJackPhase2Me = ability?.type === 'J' && !iPlayedAbility && ability.jackPhase === 'opponent_choose';
     const isJackWaiting = ability?.type === 'J' && iPlayedAbility && ability.jackPhase === 'opponent_choose';
 
+    const isStackCaller = gameState.stackWindow.active && gameState.stackWindow.caller === playerId;
+
     // --- Highlight helpers ---
 
     const getMyCardHighlight = (index) => {
-        if (gameState.stackWindow.active && gameState.stackWindow.caller === playerId) {
+        if (isStackCaller) {
+            if (selectedOppIndex !== null) {
+                // Offensive stack: selecting card to give
+                return selectedMyIndex === index ? 'green' : 'red';
+            }
+            // Self-stack: selecting card to match
             return selectedMyIndex === index ? 'green' : 'red';
         }
-        if (iPlayedAbility && ability.type === 'K') {
-            return selectedMyIndex === index ? 'green' : 'red';
-        }
-        if (isJackPhase1) {
-            return selectedMyIndex === index ? 'green' : 'red';
-        }
-        if (isJackPhase2Me) {
-            return selectedMyIndex === index ? 'green' : 'red';
-        }
-        if (iPlayedAbility && ability.type === '6') {
-            return 'red';
-        }
+        if (iPlayedAbility && ability.type === 'K') return selectedMyIndex === index ? 'green' : 'red';
+        if (isJackPhase1) return selectedMyIndex === index ? 'green' : 'red';
+        if (isJackPhase2Me) return selectedMyIndex === index ? 'green' : 'red';
+        if (iPlayedAbility && ability.type === '6') return 'red';
         return null;
     };
 
     const getOppCardHighlight = (index) => {
-        if (iPlayedAbility && ability.type === 'K') {
+        if (isStackCaller) {
             return selectedOppIndex === index ? 'green' : 'red';
         }
-        if (iPlayedAbility && ability.type === '8') {
-            return 'red';
-        }
+        if (iPlayedAbility && ability.type === 'K') return selectedOppIndex === index ? 'green' : 'red';
+        if (iPlayedAbility && ability.type === '8') return 'red';
         return null;
     };
 
@@ -131,19 +133,25 @@ function GameBoard({ gameState, socket, playerId }) {
     };
 
     const handleMyCardClick = (index) => {
-        // Stack mode: toggle selection (anyone can stack, not just turn player)
-        if (gameState.stackWindow.active && gameState.stackWindow.caller === playerId) {
-            setSelectedMyIndex(selectedMyIndex === index ? null : index);
+        // Stack mode
+        if (isStackCaller) {
+            if (selectedOppIndex !== null) {
+                // Offensive stack: picking which of our cards to give
+                setSelectedMyIndex(selectedMyIndex === index ? null : index);
+            } else {
+                // Self-stack: picking our card to match
+                setSelectedMyIndex(selectedMyIndex === index ? null : index);
+            }
             return;
         }
 
-        // Jack phase 2: opponent responds (not their turn, but they must)
+        // Jack phase 2: opponent responds
         if (isJackPhase2Me) {
             setSelectedMyIndex(selectedMyIndex === index ? null : index);
             return;
         }
 
-        // Ability resolution: works regardless of whose turn it is (stack can grant abilities off-turn)
+        // Ability resolution
         if (iPlayedAbility) {
             const type = ability.type;
             if (type === '6') {
@@ -158,7 +166,6 @@ function GameBoard({ gameState, socket, playerId }) {
 
         if (!isMyTurn) return;
 
-        // Normal turn actions
         if (uiMode === 'select_draw_discard') {
             socket.emit('draw_discard', { handIndex: index });
         } else if (gameState.drawnCard) {
@@ -167,9 +174,17 @@ function GameBoard({ gameState, socket, playerId }) {
     };
 
     const handleOppCardClick = (index) => {
+        // Stack mode: stacker can target opponent cards (offensive stack)
+        if (isStackCaller) {
+            // Clear self-stack selection, switch to offensive
+            setSelectedMyIndex(null);
+            setSelectedOppIndex(selectedOppIndex === index ? null : index);
+            return;
+        }
+
         if (gameState.stackWindow.active) return;
 
-        // Ability resolution: works regardless of turn
+        // Ability resolution
         if (iPlayedAbility) {
             const type = ability.type;
             if (type === '8') {
@@ -184,7 +199,20 @@ function GameBoard({ gameState, socket, playerId }) {
     // --- Confirm handlers ---
 
     const handleConfirmStack = () => {
-        socket.emit('execute_stack', { targetPlayerId: playerId, handIndex: selectedMyIndex });
+        if (selectedOppIndex !== null) {
+            // Offensive stack
+            socket.emit('execute_stack', {
+                targetPlayerId: opponentId,
+                handIndex: selectedOppIndex,
+                offensiveGiveIndex: selectedMyIndex
+            });
+        } else {
+            // Self-stack
+            socket.emit('execute_stack', {
+                targetPlayerId: playerId,
+                handIndex: selectedMyIndex
+            });
+        }
     };
 
     const handleConfirmKingSwap = () => {
@@ -221,10 +249,16 @@ function GameBoard({ gameState, socket, playerId }) {
             statusStr = `Game Over! ${me.score < opp?.score ? 'You Win!' : 'You Lose!'} (You: ${me.score}, Opp: ${opp?.score})`;
         }
     } else if (gameState.stackWindow.active) {
-        if (gameState.stackWindow.caller === playerId) {
-            statusStr = selectedMyIndex !== null
-                ? "Card selected! Press Confirm to stack."
-                : "You called STACK! Select one of your cards that matches the discard.";
+        if (isStackCaller) {
+            if (selectedOppIndex !== null && selectedMyIndex !== null) {
+                statusStr = "Cards selected! Press Confirm to stack.";
+            } else if (selectedOppIndex !== null) {
+                statusStr = "Opponent's card selected! Now choose one of your cards to give them.";
+            } else if (selectedMyIndex !== null) {
+                statusStr = "Card selected! Press Confirm to stack.";
+            } else {
+                statusStr = "You called STACK! Select a card from either hand that matches the discard.";
+            }
         } else {
             statusStr = "Opponent called STACK! Waiting for them...";
         }
@@ -273,9 +307,9 @@ function GameBoard({ gameState, socket, playerId }) {
 
     // --- Confirm button visibility ---
 
-    const showStackConfirm = gameState.stackWindow.active &&
-        gameState.stackWindow.caller === playerId &&
-        selectedMyIndex !== null;
+    const showStackConfirmSelf = isStackCaller && selectedMyIndex !== null && selectedOppIndex === null;
+    const showStackConfirmOffensive = isStackCaller && selectedOppIndex !== null && selectedMyIndex !== null;
+    const showStackConfirm = showStackConfirmSelf || showStackConfirmOffensive;
 
     const showKingConfirm = iPlayedAbility && ability?.type === 'K' &&
         selectedMyIndex !== null && selectedOppIndex !== null;
@@ -283,6 +317,12 @@ function GameBoard({ gameState, socket, playerId }) {
     const showJackPhase1Confirm = isJackPhase1 && selectedMyIndex !== null;
     const showJackPhase2Confirm = isJackPhase2Me && selectedMyIndex !== null;
     const showAnyConfirm = showStackConfirm || showKingConfirm || showJackPhase1Confirm || showJackPhase2Confirm;
+
+    // --- Card key helper (stable key for animations) ---
+    const cardKey = (card, slotIndex, prefix) => {
+        if (!card) return `${prefix}-empty-${slotIndex}`;
+        return `${prefix}-${card.id}-${card.value}-${card.suit}`;
+    };
 
     return (
         <div className="app-container">
@@ -329,13 +369,19 @@ function GameBoard({ gameState, socket, playerId }) {
                     {opp?.hand.map((card, i) => {
                         const hlColor = getOppCardHighlight(i);
                         return (
-                            <Card
-                                key={`opp-${i}`}
-                                card={card}
-                                onClick={() => handleOppCardClick(i)}
-                                highlight={!!hlColor}
-                                highlightColor={hlColor}
-                            />
+                            <AnimatePresence mode="wait" key={`opp-slot-${i}`}>
+                                <motion.div
+                                    key={cardKey(card, i, 'opp')}
+                                    {...cardAnim}
+                                >
+                                    <Card
+                                        card={card}
+                                        onClick={() => handleOppCardClick(i)}
+                                        highlight={!!hlColor}
+                                        highlightColor={hlColor}
+                                    />
+                                </motion.div>
+                            </AnimatePresence>
                         );
                     })}
                 </div>
@@ -363,7 +409,16 @@ function GameBoard({ gameState, socket, playerId }) {
                     onClick={handleClickDiscard}
                     style={{ cursor: (isMyTurn && topDiscard) ? 'pointer' : 'default' }}
                 >
-                    {topDiscard && <Card card={topDiscard} />}
+                    <AnimatePresence mode="wait">
+                        {topDiscard && (
+                            <motion.div
+                                key={`discard-${topDiscard.id}`}
+                                {...discardAnim}
+                            >
+                                <Card card={topDiscard} />
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
                 </div>
 
                 {gameState.drawnCard && (
@@ -377,11 +432,13 @@ function GameBoard({ gameState, socket, playerId }) {
                     </div>
                 )}
 
-                {/* Confirm button — overlayed on center area */}
+                {/* Confirm button */}
                 {showAnyConfirm && (
                     <div className="confirm-overlay">
                         {showStackConfirm && (
-                            <button className="btn-confirm" onClick={handleConfirmStack}>Confirm Stack</button>
+                            <button className="btn-confirm" onClick={handleConfirmStack}>
+                                {showStackConfirmOffensive ? 'Confirm Offensive Stack' : 'Confirm Stack'}
+                            </button>
                         )}
                         {showKingConfirm && (
                             <button className="btn-confirm" onClick={handleConfirmKingSwap}>Confirm Swap</button>
@@ -419,14 +476,20 @@ function GameBoard({ gameState, socket, playerId }) {
                     {me.hand.map((card, i) => {
                         const hlColor = getMyCardHighlight(i);
                         return (
-                            <Card
-                                key={`me-${i}`}
-                                card={card}
-                                onClick={() => handleMyCardClick(i)}
-                                highlight={!!hlColor}
-                                highlightColor={hlColor}
-                                isFaceUpOverride={card?.knownToPlayer}
-                            />
+                            <AnimatePresence mode="wait" key={`me-slot-${i}`}>
+                                <motion.div
+                                    key={cardKey(card, i, 'me')}
+                                    {...cardAnim}
+                                >
+                                    <Card
+                                        card={card}
+                                        onClick={() => handleMyCardClick(i)}
+                                        highlight={!!hlColor}
+                                        highlightColor={hlColor}
+                                        isFaceUpOverride={card?.knownToPlayer}
+                                    />
+                                </motion.div>
+                            </AnimatePresence>
                         );
                     })}
                 </div>
