@@ -275,12 +275,13 @@ io.on('connection', (socket) => {
         } else if (type === '8') {
             const opp = game.players[targetData.opponentId];
             const revealedCard = opp.hand[targetData.oppIndex];
-            opp.hand[targetData.oppIndex].knownToPlayer = true;
+            opp.hand[targetData.oppIndex].knownToOpponent = true;
             socket.emit('ability_reveal', { card: revealedCard, index: targetData.oppIndex, player: targetData.opponentId });
             notifyPlayer(targetData.opponentId, `${getPlayerName(game, socket.id)} peeked at one of your cards!`, 'info');
         } else if (type === '6') {
             const p1 = game.players[socket.id];
             const revealedCard = p1.hand[targetData.myIndex];
+            p1.hand[targetData.myIndex].knownToPlayer = true;
             socket.emit('ability_reveal', { card: revealedCard, index: targetData.myIndex, player: socket.id });
         }
 
@@ -326,6 +327,13 @@ function handleDiscard(game, card, socketId, roomId) {
         checkEndGameAndAdvance(game, roomId);
         return;
     }
+
+    // Show both players what card was played
+    io.to(roomId).emit('card_movement', {
+        playerName: getPlayerName(game, socketId),
+        card: { value: card.value, suit: card.suit, id: card.id, isFaceUp: true },
+    });
+
     card.isFaceUp = true;
     game.discardPile.push(card);
 
@@ -403,6 +411,7 @@ function sanitizeGameState(game, socketId) {
 
                     if (safeGame.status === 'phase1' && pId === socketId && (i === 2 || i === 3)) canSee = true;
                     if (card.knownToPlayer && pId === socketId) canSee = true;
+                    if (card.knownToOpponent && pId !== socketId) canSee = true;
 
                     if (!canSee) {
                         card.value = '?';

@@ -29,6 +29,7 @@ function GameBoard({ gameState, socket, playerId }) {
     const [uiMode, setUiMode] = useState('default');
     const [toasts, setToasts] = useState([]);
     const [revealCard, setRevealCard] = useState(null);
+    const [actionCard, setActionCard] = useState(null);
     const toastTimers = useRef({});
 
     // --- Toast system ---
@@ -62,6 +63,16 @@ function GameBoard({ gameState, socket, playerId }) {
         };
         socket.on('stack_reveal', handleStackReveal);
         return () => socket.off('stack_reveal', handleStackReveal);
+    }, [socket]);
+
+    // Listen for card movements — shows which card was played
+    useEffect(() => {
+        const handleMovement = ({ playerName, card }) => {
+            setActionCard({ playerName, card });
+            setTimeout(() => setActionCard(null), 2000);
+        };
+        socket.on('card_movement', handleMovement);
+        return () => socket.off('card_movement', handleMovement);
     }, [socket]);
 
     useEffect(() => {
@@ -344,6 +355,14 @@ function GameBoard({ gameState, socket, playerId }) {
                 <div className="reveal-overlay">
                     <Card card={{ ...revealCard, isFaceUp: true }} />
                     <p className="reveal-label">Not a match!</p>
+                </div>
+            )}
+
+            {/* Card movement overlay — shows which card was just played */}
+            {actionCard && !revealCard && (
+                <div className="action-overlay">
+                    <Card card={actionCard.card} />
+                    <p className="action-label">{actionCard.playerName} played</p>
                 </div>
             )}
 
