@@ -287,8 +287,16 @@ io.on('connection', (socket) => {
             game.activeAbility = null;
 
             // If the stacked card is an ability card, the stacker gets the ability
+            // But only if they have the cards needed to use it
             if (['K', 'J', '8', '6'].includes(chosenCard.value)) {
-                game.activeAbility = { type: chosenCard.value, player: socket.id };
+                const stackerCards = callerPlayer.hand.filter(c => c !== null);
+                const canUseAbility =
+                    chosenCard.value === '8' ? true : // peek opponent — always usable
+                    stackerCards.length > 0;          // K, J, 6 all need at least 1 own card
+
+                if (canUseAbility) {
+                    game.activeAbility = { type: chosenCard.value, player: socket.id };
+                }
             }
 
             notifyRoom(roomId, `Stack successful! ${callerName} matched the ${chosenCard.value}.`, 'success');
