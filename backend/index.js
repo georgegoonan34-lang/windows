@@ -318,6 +318,19 @@ io.on('connection', (socket) => {
         }
 
         game.stackWindow = { active: false, caller: null, targetValue: null };
+
+        // Check if any player has 0 cards — end game immediately
+        if (callerMatches) {
+            const anyEmpty = game.playerOrder.some(pId =>
+                game.players[pId].hand.every(c => c === null)
+            );
+            if (anyEmpty) {
+                game.activeAbility = null;
+                promptEndGame(game, roomId);
+                return;
+            }
+        }
+
         // If stack cancelled an ability and no new ability was triggered, advance the turn
         if (callerMatches && !game.activeAbility) {
             checkEndGameAndAdvance(game, roomId);
