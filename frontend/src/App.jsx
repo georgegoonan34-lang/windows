@@ -3,8 +3,7 @@ import { io } from 'socket.io-client';
 import GameBoard from './GameBoard';
 import { User, KeyRound, Play } from 'lucide-react';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
-const socket = io(BACKEND_URL);
+const socket = io(import.meta.env.DEV ? 'http://localhost:3001' : undefined);
 
 function App() {
   const [gameState, setGameState] = useState(null);

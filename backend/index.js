@@ -1,4 +1,5 @@
 const express = require('express');
+const path = require('path');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
@@ -6,6 +7,12 @@ const { createDeck, createGameState, dealInitial, calculateScore } = require('./
 
 const app = express();
 app.use(cors());
+
+// Serve frontend static files
+app.use(express.static(path.join(__dirname, '..', 'frontend', 'dist')));
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '..', 'frontend', 'dist', 'index.html'));
+});
 
 const server = http.createServer(app);
 const io = new Server(server, {
