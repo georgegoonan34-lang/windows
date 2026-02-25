@@ -257,6 +257,7 @@ io.on('connection', (socket) => {
         const callerMatches = chosenCard && chosenCard.value === game.stackWindow.targetValue;
         const callerPlayer = game.players[socket.id];
         const callerName = callerPlayer.name;
+        const hadAbility = game.activeAbility !== null;
 
         if (callerMatches) {
             const stackMovements = [
@@ -295,7 +296,7 @@ io.on('connection', (socket) => {
                     stackerCards.length > 0;          // K, J, 6 all need at least 1 own card
 
                 if (canUseAbility) {
-                    game.activeAbility = { type: chosenCard.value, player: socket.id };
+                    game.activeAbility = { type: chosenCard.value, player: socket.id, fromStack: true };
                 }
             }
 
@@ -319,20 +320,10 @@ io.on('connection', (socket) => {
 
         game.stackWindow = { active: false, caller: null, targetValue: null };
 
-        // Check if any player has 0 cards — end game immediately
-        if (callerMatches) {
-            const anyEmpty = game.playerOrder.some(pId =>
-                game.players[pId].hand.every(c => c === null)
-            );
-            if (anyEmpty) {
-                game.activeAbility = null;
-                promptEndGame(game, roomId);
-                return;
-            }
-        }
-
-        // If stack cancelled an ability and no new ability was triggered, advance the turn
-        if (callerMatches && !game.activeAbility) {
+        // Only advance the turn if the stack cancelled a pre-existing ability
+        // (meaning the turn player already took their action).
+        // Stack between turns should NOT advance — it's just an interrupt.
+        if (callerMatches && hadAbility && !game.activeAbility) {
             checkEndGameAndAdvance(game, roomId);
         } else {
             sendGameState(game, roomId);
@@ -389,8 +380,13 @@ io.on('connection', (socket) => {
             }, 5000);
         }
 
+        const fromStack = game.activeAbility?.fromStack;
         game.activeAbility = null;
-        checkEndGameAndAdvance(game, roomId);
+        if (fromStack) {
+            sendGameState(game, roomId);
+        } else {
+            checkEndGameAndAdvance(game, roomId);
+        }
     });
 
     // Jack Phase 2: Opponent responds with their card choice
@@ -418,8 +414,13 @@ io.on('connection', (socket) => {
 
         notifyRoom(roomId, 'Cards swapped!', 'info');
 
+        const fromStack = game.activeAbility?.fromStack;
         game.activeAbility = null;
-        checkEndGameAndAdvance(game, roomId);
+        if (fromStack) {
+            sendGameState(game, roomId);
+        } else {
+            checkEndGameAndAdvance(game, roomId);
+        }
     });
 
     socket.on('disconnecting', () => {
@@ -457,7 +458,8 @@ function checkEndGameAndAdvance(game, roomId) {
     const currentPlayerId = game.playerOrder[game.turnIndex];
     const player = game.players[currentPlayerId];
 
-    const allFaceUp = player.hand.every(c => c === null || c.isFaceUp);
+    const hasCards = player.hand.some(c => c !== null);
+    const allFaceUp = hasCards && player.hand.every(c => c === null || c.isFaceUp);
 
     if (allFaceUp && !player.isFinalTurn) {
         player.isFinalTurn = true;

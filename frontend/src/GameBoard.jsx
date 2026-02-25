@@ -451,6 +451,7 @@ function GameBoard({ gameState, socket, playerId }) {
                                     onClick={() => handleOppCardClick(i)}
                                     highlight={!!hlColor}
                                     highlightColor={hlColor}
+                                    isFaceUpOverride={card?.knownToOpponent}
                                 />
                             </div>
                         );
