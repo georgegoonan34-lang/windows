@@ -193,6 +193,46 @@ io.on('connection', (socket) => {
         sendGameState(game, roomId);
     });
 
+    // Action: Play Again
+    socket.on('play_again', () => {
+        const roomId = getRoom(socket);
+        const game = activeGames[roomId];
+        if (!game || game.status !== 'finished') return;
+
+        // Reset game state but keep players
+        game.status = 'phase1';
+        game.turnIndex = 0;
+        game.deck = [];
+        game.discardPile = [];
+        game.drawnCard = null;
+        game.activeAbility = null;
+        game.stackWindow = { active: false, caller: null, targetValue: null };
+        game.endTriggeredBy = null;
+
+        for (const pId of game.playerOrder) {
+            const player = game.players[pId];
+            player.hand = [null, null, null, null];
+            player.score = 0;
+            player.isFinalTurn = false;
+        }
+
+        dealInitial(game);
+        sendGameState(game, roomId);
+
+        setTimeout(() => {
+            if (activeGames[roomId] && activeGames[roomId].status === 'phase1') {
+                activeGames[roomId].status = 'playing';
+                for (const pId of activeGames[roomId].playerOrder) {
+                    const player = activeGames[roomId].players[pId];
+                    if (player.hand[2]) player.hand[2].knownToPlayer = false;
+                    if (player.hand[3]) player.hand[3].knownToPlayer = false;
+                }
+                sendGameState(activeGames[roomId], roomId);
+                notifyRoom(roomId, `${getPlayerName(activeGames[roomId], activeGames[roomId].playerOrder[0])}'s turn!`, 'info');
+            }
+        }, 10000);
+    });
+
     // Action: Call It (End Game)
     socket.on('call_it', () => {
         const roomId = getRoom(socket);
@@ -270,7 +310,12 @@ io.on('connection', (socket) => {
         }
 
         game.stackWindow = { active: false, caller: null, targetValue: null };
-        sendGameState(game, roomId);
+        // If stack cancelled an ability and no new ability was triggered, advance the turn
+        if (callerMatches && !game.activeAbility) {
+            checkEndGameAndAdvance(game, roomId);
+        } else {
+            sendGameState(game, roomId);
+        }
     });
 
     // Abilities Handling
@@ -304,11 +349,23 @@ io.on('connection', (socket) => {
             opp.hand[targetData.oppIndex].knownToOpponent = true;
             socket.emit('ability_reveal', { card: revealedCard, index: targetData.oppIndex, player: targetData.opponentId });
             notifyPlayer(targetData.opponentId, `${getPlayerName(game, socket.id)} peeked at one of your cards!`, 'info');
+            setTimeout(() => {
+                if (activeGames[roomId]) {
+                    revealedCard.knownToOpponent = false;
+                    sendGameState(activeGames[roomId], roomId);
+                }
+            }, 5000);
         } else if (type === '6') {
             const p1 = game.players[socket.id];
             const revealedCard = p1.hand[targetData.myIndex];
             p1.hand[targetData.myIndex].knownToPlayer = true;
             socket.emit('ability_reveal', { card: revealedCard, index: targetData.myIndex, player: socket.id });
+            setTimeout(() => {
+                if (activeGames[roomId]) {
+                    revealedCard.knownToPlayer = false;
+                    sendGameState(activeGames[roomId], roomId);
+                }
+            }, 5000);
         }
 
         game.activeAbility = null;

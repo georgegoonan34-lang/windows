@@ -111,12 +111,17 @@ function GameBoard({ gameState, socket, playerId }) {
         return () => socket.off('card_animation', handleAnimation);
     }, [socket, getPositionFor]);
 
-    // Reset selections when game state changes
+    // Reset selections when game state changes (use stable keys to avoid spurious resets)
+    const abilityKey = gameState.activeAbility
+        ? `${gameState.activeAbility.type}-${gameState.activeAbility.player}-${gameState.activeAbility.jackPhase || ''}`
+        : null;
+    const hasDrawnCard = !!gameState.drawnCard;
+
     useEffect(() => {
         setSelectedMyIndex(null);
         setSelectedOppIndex(null);
         setUiMode('default');
-    }, [gameState.turnIndex, gameState.drawnCard, gameState.activeAbility, gameState.stackWindow.active]);
+    }, [gameState.turnIndex, hasDrawnCard, abilityKey, gameState.stackWindow.active]);
 
     const opponentId = Object.keys(gameState.players).find(id => id !== playerId);
     const me = gameState.players[playerId];
@@ -422,6 +427,15 @@ function GameBoard({ gameState, socket, playerId }) {
 
             <div className="status-banner">
                 {statusStr}
+                {gameState.status === 'finished' && (
+                    <button
+                        className="btn-primary"
+                        onClick={() => socket.emit('play_again')}
+                        style={{ marginLeft: '1rem', padding: '0.3rem 1rem', fontSize: '0.85rem' }}
+                    >
+                        Play Again
+                    </button>
+                )}
             </div>
 
             {/* Opponent Hand */}
