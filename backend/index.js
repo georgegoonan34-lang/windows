@@ -125,6 +125,11 @@ io.on('connection', (socket) => {
         const player = game.players[socket.id];
         const oldCard = player.hand[handIndex];
 
+        io.to(roomId).emit('card_animation', { movements: [
+            { from: 'discard', to: { player: socket.id, index: handIndex } },
+            { from: { player: socket.id, index: handIndex }, to: 'discard' }
+        ]});
+
         discardCard.isFaceUp = false;
         discardCard.knownToPlayer = false;
         player.hand[handIndex] = discardCard;
@@ -141,6 +146,11 @@ io.on('connection', (socket) => {
 
         const player = game.players[socket.id];
         const oldCard = player.hand[handIndex];
+
+        io.to(roomId).emit('card_animation', { movements: [
+            { from: 'drawn', to: { player: socket.id, index: handIndex } },
+            { from: { player: socket.id, index: handIndex }, to: 'discard' }
+        ]});
 
         game.drawnCard.isFaceUp = false;
         game.drawnCard.knownToPlayer = false;
@@ -159,6 +169,10 @@ io.on('connection', (socket) => {
 
         const card = game.drawnCard;
         game.drawnCard = null;
+
+        io.to(roomId).emit('card_animation', { movements: [
+            { from: 'drawn', to: 'discard' }
+        ]});
 
         handleDiscard(game, card, socket.id, roomId);
     });
@@ -205,6 +219,14 @@ io.on('connection', (socket) => {
         const callerName = callerPlayer.name;
 
         if (callerMatches) {
+            const stackMovements = [
+                { from: { player: targetPlayerId, index: handIndex }, to: 'discard' }
+            ];
+            if (targetPlayerId !== socket.id && offensiveGiveIndex !== undefined) {
+                stackMovements.push({ from: { player: socket.id, index: offensiveGiveIndex }, to: { player: targetPlayerId, index: handIndex } });
+            }
+            io.to(roomId).emit('card_animation', { movements: stackMovements });
+
             // Success — remove the matched card and push to discard
             targetPlayer.hand[handIndex] = null;
             chosenCard.isFaceUp = true;
@@ -258,6 +280,10 @@ io.on('connection', (socket) => {
         if (!game || game.activeAbility?.player !== socket.id || game.activeAbility?.type !== type) return;
 
         if (type === 'K') {
+            io.to(roomId).emit('card_animation', { movements: [
+                { from: { player: socket.id, index: targetData.myIndex }, to: { player: targetData.opponentId, index: targetData.oppIndex } },
+                { from: { player: targetData.opponentId, index: targetData.oppIndex }, to: { player: socket.id, index: targetData.myIndex } }
+            ]});
             const p1 = game.players[socket.id];
             const p2 = game.players[targetData.opponentId];
             const temp = p1.hand[targetData.myIndex];
@@ -303,6 +329,11 @@ io.on('connection', (socket) => {
         const opponent = game.players[socket.id];
         const jackIndex = game.activeAbility.jackMyIndex;
 
+        io.to(roomId).emit('card_animation', { movements: [
+            { from: { player: jackPlayerId, index: jackIndex }, to: { player: socket.id, index: myIndex } },
+            { from: { player: socket.id, index: myIndex }, to: { player: jackPlayerId, index: jackIndex } }
+        ]});
+
         const temp = jackPlayer.hand[jackIndex];
         jackPlayer.hand[jackIndex] = opponent.hand[myIndex];
         opponent.hand[myIndex] = temp;
@@ -327,12 +358,6 @@ function handleDiscard(game, card, socketId, roomId) {
         checkEndGameAndAdvance(game, roomId);
         return;
     }
-
-    // Show both players what card was played
-    io.to(roomId).emit('card_movement', {
-        playerName: getPlayerName(game, socketId),
-        card: { value: card.value, suit: card.suit, id: card.id, isFaceUp: true },
-    });
 
     card.isFaceUp = true;
     game.discardPile.push(card);

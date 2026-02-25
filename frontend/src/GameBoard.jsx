@@ -4,17 +4,7 @@ import Card from './Card';
 import { Layers } from 'lucide-react';
 
 let toastIdCounter = 0;
-
-// My hand: cards exit upward (towards center), enter from above
-const myCardExit = { x: 60, y: -40, opacity: 0, scale: 0.7 };
-const myCardEnter = { x: -40, y: -30, opacity: 0, scale: 0.7 };
-
-// Opponent hand: cards exit downward (towards center), enter from below
-const oppCardExit = { x: 60, y: 40, opacity: 0, scale: 0.7 };
-const oppCardEnter = { x: -40, y: 30, opacity: 0, scale: 0.7 };
-
-const cardAnimate = { x: 0, y: 0, opacity: 1, scale: 1 };
-const cardTransition = { duration: 0.4, ease: [0.25, 0.46, 0.45, 0.94] };
+let flyingIdCounter = 0;
 
 const discardAnim = {
     initial: { scale: 0.6, opacity: 0, y: -20 },
@@ -29,8 +19,13 @@ function GameBoard({ gameState, socket, playerId }) {
     const [uiMode, setUiMode] = useState('default');
     const [toasts, setToasts] = useState([]);
     const [revealCard, setRevealCard] = useState(null);
-    const [actionCard, setActionCard] = useState(null);
+    const [flyingCards, setFlyingCards] = useState([]);
+
     const toastTimers = useRef({});
+    const mySlotRefs = useRef({});
+    const oppSlotRefs = useRef({});
+    const discardRef = useRef(null);
+    const deckRef = useRef(null);
 
     // --- Toast system ---
 
@@ -65,19 +60,56 @@ function GameBoard({ gameState, socket, playerId }) {
         return () => socket.off('stack_reveal', handleStackReveal);
     }, [socket]);
 
-    // Listen for card movements — shows which card was played
-    useEffect(() => {
-        const handleMovement = ({ playerName, card }) => {
-            setActionCard({ playerName, card });
-            setTimeout(() => setActionCard(null), 2000);
-        };
-        socket.on('card_movement', handleMovement);
-        return () => socket.off('card_movement', handleMovement);
-    }, [socket]);
-
     useEffect(() => {
         return () => Object.values(toastTimers.current).forEach(clearTimeout);
     }, []);
+
+    // --- Flying card animation system ---
+
+    const getPositionFor = useCallback((loc) => {
+        if (loc === 'discard' && discardRef.current) {
+            const rect = discardRef.current.getBoundingClientRect();
+            return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        }
+        if (loc === 'drawn') {
+            // Drawn card overlay is centered on screen at 1.4x scale
+            return { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+        }
+        if (typeof loc === 'object' && loc.player !== undefined) {
+            const isMe = loc.player === playerId;
+            const refs = isMe ? mySlotRefs.current : oppSlotRefs.current;
+            const el = refs[loc.index];
+            if (el) {
+                const rect = el.getBoundingClientRect();
+                return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+            }
+        }
+        return null;
+    }, [playerId]);
+
+    useEffect(() => {
+        const handleAnimation = ({ movements }) => {
+            const newFlyers = [];
+            for (const move of movements) {
+                const fromPos = getPositionFor(move.from);
+                const toPos = getPositionFor(move.to);
+                if (!fromPos || !toPos) continue;
+
+                const id = ++flyingIdCounter;
+                newFlyers.push({ id, fromPos, toPos });
+            }
+            if (newFlyers.length === 0) return;
+
+            setFlyingCards(prev => [...prev, ...newFlyers]);
+
+            // Remove after animation completes
+            setTimeout(() => {
+                setFlyingCards(prev => prev.filter(fc => !newFlyers.some(nf => nf.id === fc.id)));
+            }, 650);
+        };
+        socket.on('card_animation', handleAnimation);
+        return () => socket.off('card_animation', handleAnimation);
+    }, [socket, getPositionFor]);
 
     // Reset selections when game state changes
     useEffect(() => {
@@ -109,10 +141,8 @@ function GameBoard({ gameState, socket, playerId }) {
     const getMyCardHighlight = (index) => {
         if (isStackCaller) {
             if (selectedOppIndex !== null) {
-                // Offensive stack: selecting card to give
                 return selectedMyIndex === index ? 'green' : 'red';
             }
-            // Self-stack: selecting card to match
             return selectedMyIndex === index ? 'green' : 'red';
         }
         if (iPlayedAbility && ability.type === 'K') return selectedMyIndex === index ? 'green' : 'red';
@@ -148,25 +178,20 @@ function GameBoard({ gameState, socket, playerId }) {
     };
 
     const handleMyCardClick = (index) => {
-        // Stack mode
         if (isStackCaller) {
             if (selectedOppIndex !== null) {
-                // Offensive stack: picking which of our cards to give
                 setSelectedMyIndex(selectedMyIndex === index ? null : index);
             } else {
-                // Self-stack: picking our card to match
                 setSelectedMyIndex(selectedMyIndex === index ? null : index);
             }
             return;
         }
 
-        // Jack phase 2: opponent responds
         if (isJackPhase2Me) {
             setSelectedMyIndex(selectedMyIndex === index ? null : index);
             return;
         }
 
-        // Ability resolution
         if (iPlayedAbility) {
             const type = ability.type;
             if (type === '6') {
@@ -189,9 +214,7 @@ function GameBoard({ gameState, socket, playerId }) {
     };
 
     const handleOppCardClick = (index) => {
-        // Stack mode: stacker can target opponent cards (offensive stack)
         if (isStackCaller) {
-            // Clear self-stack selection, switch to offensive
             setSelectedMyIndex(null);
             setSelectedOppIndex(selectedOppIndex === index ? null : index);
             return;
@@ -199,7 +222,6 @@ function GameBoard({ gameState, socket, playerId }) {
 
         if (gameState.stackWindow.active) return;
 
-        // Ability resolution
         if (iPlayedAbility) {
             const type = ability.type;
             if (type === '8') {
@@ -215,14 +237,12 @@ function GameBoard({ gameState, socket, playerId }) {
 
     const handleConfirmStack = () => {
         if (selectedOppIndex !== null) {
-            // Offensive stack
             socket.emit('execute_stack', {
                 targetPlayerId: opponentId,
                 handIndex: selectedOppIndex,
                 offensiveGiveIndex: selectedMyIndex
             });
         } else {
-            // Self-stack
             socket.emit('execute_stack', {
                 targetPlayerId: playerId,
                 handIndex: selectedMyIndex
@@ -333,11 +353,9 @@ function GameBoard({ gameState, socket, playerId }) {
     const showJackPhase2Confirm = isJackPhase2Me && selectedMyIndex !== null;
     const showAnyConfirm = showStackConfirm || showKingConfirm || showJackPhase1Confirm || showJackPhase2Confirm;
 
-    // --- Card key helper (stable key for animations) ---
-    const cardKey = (card, slotIndex, prefix) => {
-        if (!card) return `${prefix}-empty-${slotIndex}`;
-        return `${prefix}-${card.id}-${card.value}-${card.suit}`;
-    };
+    // --- Flying card dimensions ---
+    const CARD_W = 80;
+    const CARD_H = 112;
 
     return (
         <div className="app-container">
@@ -358,13 +376,34 @@ function GameBoard({ gameState, socket, playerId }) {
                 </div>
             )}
 
-            {/* Card movement overlay — shows which card was just played */}
-            {actionCard && !revealCard && (
-                <div className="action-overlay">
-                    <Card card={actionCard.card} />
-                    <p className="action-label">{actionCard.playerName} played</p>
-                </div>
-            )}
+            {/* Flying card animations */}
+            {flyingCards.map(fc => (
+                <motion.div
+                    key={fc.id}
+                    initial={{
+                        position: 'fixed',
+                        left: fc.fromPos.x - CARD_W / 2,
+                        top: fc.fromPos.y - CARD_H / 2,
+                        width: CARD_W,
+                        height: CARD_H,
+                        zIndex: 500,
+                        opacity: 1,
+                    }}
+                    animate={{
+                        left: fc.toPos.x - CARD_W / 2,
+                        top: fc.toPos.y - CARD_H / 2,
+                        opacity: 1,
+                    }}
+                    transition={{ duration: 0.55, ease: [0.25, 0.46, 0.45, 0.94] }}
+                    style={{ position: 'fixed', pointerEvents: 'none', zIndex: 500 }}
+                >
+                    <div className="card-container" style={{ pointerEvents: 'none' }}>
+                        <div className="card-inner">
+                            <div className="card-face card-front"></div>
+                        </div>
+                    </div>
+                </motion.div>
+            ))}
 
             <div className="header">
                 <div>
@@ -392,22 +431,14 @@ function GameBoard({ gameState, socket, playerId }) {
                     {opp?.hand.map((card, i) => {
                         const hlColor = getOppCardHighlight(i);
                         return (
-                            <AnimatePresence mode="wait" key={`opp-slot-${i}`}>
-                                <motion.div
-                                    key={cardKey(card, i, 'opp')}
-                                    initial={oppCardEnter}
-                                    animate={cardAnimate}
-                                    exit={oppCardExit}
-                                    transition={cardTransition}
-                                >
-                                    <Card
-                                        card={card}
-                                        onClick={() => handleOppCardClick(i)}
-                                        highlight={!!hlColor}
-                                        highlightColor={hlColor}
-                                    />
-                                </motion.div>
-                            </AnimatePresence>
+                            <div key={`opp-slot-${i}`} ref={el => { oppSlotRefs.current[i] = el; }}>
+                                <Card
+                                    card={card}
+                                    onClick={() => handleOppCardClick(i)}
+                                    highlight={!!hlColor}
+                                    highlightColor={hlColor}
+                                />
+                            </div>
                         );
                     })}
                 </div>
@@ -417,6 +448,7 @@ function GameBoard({ gameState, socket, playerId }) {
             <div className="center-area glass-panel" style={{ position: 'relative' }}>
 
                 <div
+                    ref={deckRef}
                     className={`pile ${isMyTurn && !gameState.drawnCard && !ability && !gameState.stackWindow.active ? 'highlight' : ''}`}
                     data-label="DECK"
                     onClick={handleClickDeck}
@@ -430,6 +462,7 @@ function GameBoard({ gameState, socket, playerId }) {
                 </div>
 
                 <div
+                    ref={discardRef}
                     className={`pile ${isMyTurn && topDiscard && !gameState.drawnCard && !ability && !gameState.stackWindow.active ? 'highlight' : ''}`}
                     data-label="DISCARD"
                     onClick={handleClickDiscard}
@@ -502,23 +535,15 @@ function GameBoard({ gameState, socket, playerId }) {
                     {me.hand.map((card, i) => {
                         const hlColor = getMyCardHighlight(i);
                         return (
-                            <AnimatePresence mode="wait" key={`me-slot-${i}`}>
-                                <motion.div
-                                    key={cardKey(card, i, 'me')}
-                                    initial={myCardEnter}
-                                    animate={cardAnimate}
-                                    exit={myCardExit}
-                                    transition={cardTransition}
-                                >
-                                    <Card
-                                        card={card}
-                                        onClick={() => handleMyCardClick(i)}
-                                        highlight={!!hlColor}
-                                        highlightColor={hlColor}
-                                        isFaceUpOverride={card?.knownToPlayer}
-                                    />
-                                </motion.div>
-                            </AnimatePresence>
+                            <div key={`me-slot-${i}`} ref={el => { mySlotRefs.current[i] = el; }}>
+                                <Card
+                                    card={card}
+                                    onClick={() => handleMyCardClick(i)}
+                                    highlight={!!hlColor}
+                                    highlightColor={hlColor}
+                                    isFaceUpOverride={card?.knownToPlayer}
+                                />
+                            </div>
                         );
                     })}
                 </div>
