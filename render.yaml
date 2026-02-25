@@ -1,0 +1,30 @@
+services:
+  # Backend — Web Service (supports WebSockets)
+  - type: web
+    name: windows-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+  # Frontend — Static Site
+  - type: web
+    name: windows-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: no-cache
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_BACKEND_URL
+        value: https://windows-backend.onrender.com
