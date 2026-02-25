@@ -5,17 +5,21 @@ import { Layers } from 'lucide-react';
 
 let toastIdCounter = 0;
 
-const cardAnim = {
-    initial: { scale: 0.4, opacity: 0 },
-    animate: { scale: 1, opacity: 1 },
-    exit: { scale: 0.4, opacity: 0 },
-    transition: { duration: 0.3, ease: 'easeOut' },
-};
+// My hand: cards exit upward (towards center), enter from above
+const myCardExit = { x: 60, y: -40, opacity: 0, scale: 0.7 };
+const myCardEnter = { x: -40, y: -30, opacity: 0, scale: 0.7 };
+
+// Opponent hand: cards exit downward (towards center), enter from below
+const oppCardExit = { x: 60, y: 40, opacity: 0, scale: 0.7 };
+const oppCardEnter = { x: -40, y: 30, opacity: 0, scale: 0.7 };
+
+const cardAnimate = { x: 0, y: 0, opacity: 1, scale: 1 };
+const cardTransition = { duration: 0.4, ease: [0.25, 0.46, 0.45, 0.94] };
 
 const discardAnim = {
-    initial: { scale: 0.5, opacity: 0, y: -15 },
+    initial: { scale: 0.6, opacity: 0, y: -20 },
     animate: { scale: 1, opacity: 1, y: 0 },
-    exit: { scale: 0.5, opacity: 0, y: 15 },
+    exit: { scale: 0.6, opacity: 0, y: 20 },
     transition: { duration: 0.3 },
 };
 
@@ -372,7 +376,10 @@ function GameBoard({ gameState, socket, playerId }) {
                             <AnimatePresence mode="wait" key={`opp-slot-${i}`}>
                                 <motion.div
                                     key={cardKey(card, i, 'opp')}
-                                    {...cardAnim}
+                                    initial={oppCardEnter}
+                                    animate={cardAnimate}
+                                    exit={oppCardExit}
+                                    transition={cardTransition}
                                 >
                                     <Card
                                         card={card}
@@ -479,7 +486,10 @@ function GameBoard({ gameState, socket, playerId }) {
                             <AnimatePresence mode="wait" key={`me-slot-${i}`}>
                                 <motion.div
                                     key={cardKey(card, i, 'me')}
-                                    {...cardAnim}
+                                    initial={myCardEnter}
+                                    animate={cardAnimate}
+                                    exit={myCardExit}
+                                    transition={cardTransition}
                                 >
                                     <Card
                                         card={card}
